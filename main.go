@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"os/exec"
 	"text/tabwriter"
 	"text/template"
 
@@ -193,6 +194,12 @@ func containerTuples(targetKind string, comps map[string]interface{}) []*Contain
 	return result
 }
 
+func dhallFormat(file string) error {
+	cmd := exec.Command("dhall", "format", "--inplace", file)
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
 func main() {
 	log15.Root().SetHandler(log15.StreamHandler(os.Stdout, log15.LogfmtFormat()))
 
@@ -232,6 +239,11 @@ func main() {
 	err = executeTemplate(tmpl, data, destinationFile)
 	if err != nil {
 		logFatal("failed to write template", "out", destinationFile, "error", err)
+	}
+
+	err = dhallFormat(destinationFile)
+	if err != nil {
+		logFatal("failed to format dhall output", "out", destinationFile, "error", err)
 	}
 
 	log15.Info("Done")
