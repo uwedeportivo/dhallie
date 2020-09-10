@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"text/tabwriter"
 	"text/template"
 
@@ -21,8 +23,6 @@ var (
 )
 
 var (
-	destinationFile string
-	templateFile    string
 	componentsFile  string
 
 	printHelp    bool
@@ -30,14 +30,12 @@ var (
 )
 
 func init() {
-	flag.StringVarP(&destinationFile, "output", "o", "", "(required) dhall output file")
-	flag.StringVarP(&templateFile, "template", "t", "", "(required) dhall template file to use")
 	flag.StringVarP(&componentsFile, "components", "c", "", "(required) components yaml file")
 	flag.BoolVarP(&printHelp, "help", "h", false, "print usage instructions")
 	flag.BoolVar(&printVersion, "version", false, "print version information")
 
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage of ds-to-dhall: --output <output> <path>...\n")
+		fmt.Fprintf(os.Stderr, "Usage of dhallie: \n")
 		fmt.Fprintln(os.Stderr, "OPTIONS:")
 		flag.PrintDefaults()
 		fmt.Fprintln(os.Stderr, usageArgs())
@@ -116,35 +114,6 @@ type TemplateData struct {
 	StatefulSetTuples []*ContainerTuple
 }
 
-/*
-Frontend:
-    Deployment:
-        sourcegraph-frontend:
-            containers:
-                frontend: {}
-                jaeger-agent: {}
-    Ingress:
-        sourcegraph-frontend: {}
-    Role:
-        sourcegraph-frontend: {}
-    RoleBinding:
-        sourcegraph-frontend: {}
-    Service:
-        sourcegraph-frontend: {}
-        sourcegraph-frontend-internal: {}
-    ServiceAccount:
-        sourcegraph-frontend: {}
-Indexed-Search:
-    Service:
-        indexed-search: {}
-        indexed-search-indexer: {}
-    StatefulSet:
-        indexed-search:
-            containers:
-                zoekt-indexserver: {}
-                zoekt-webserver: {}
- */
-
 func containerTuples(targetKind string, comps map[string]interface{}) []*ContainerTuple {
 	var result []*ContainerTuple
 
@@ -200,6 +169,27 @@ func dhallFormat(file string) error {
 	return cmd.Run()
 }
 
+func processTemplate(templatePath string, data *TemplateData) error {
+	tmpl, err := template.ParseFiles(templatePath)
+	if err != nil {
+		return fmt.Errorf("failed to parse template file %s: %v", templatePath, err)
+	}
+
+	outPath := strings.TrimSuffix(templatePath, filepath.Ext(templatePath))
+	outPath = outPath + ".dhall"
+
+	err = executeTemplate(tmpl, data, outPath)
+	if err != nil {
+		return fmt.Errorf("failed to write output %s: %v", outPath, err)
+	}
+
+	err = dhallFormat(outPath)
+	if err != nil {
+		return fmt.Errorf("failed to format output %s: %v", outPath, err)
+	}
+	return nil
+}
+
 func main() {
 	log15.Root().SetHandler(log15.StreamHandler(os.Stdout, log15.LogfmtFormat()))
 
@@ -216,14 +206,9 @@ func main() {
 		os.Exit(0)
 	}
 
-	if destinationFile == "" || templateFile == "" || componentsFile == "" {
+	if componentsFile == "" {
 		flag.Usage()
 		os.Exit(1)
-	}
-
-	tmpl, err := template.ParseFiles(templateFile)
-	if err != nil {
-		logFatal("failed to parse template file", "template", templateFile, "error", err)
 	}
 
 	comps, err := loadComponents(componentsFile)
@@ -231,19 +216,42 @@ func main() {
 		logFatal("failed to load components", "components", componentsFile, "error", err)
 	}
 
+	inputs := flag.Args()
+	if len(inputs) == 0 {
+		cwd, err := os.Getwd()
+		if err != nil {
+			logFatal("failed to get cwd for inputs", "err", err)
+		}
+		inputs = []string{cwd}
+	}
+
+
 	data := &TemplateData{
 		DeploymentTuples: containerTuples("Deployment", comps),
 		StatefulSetTuples: containerTuples("StatefulSet", comps),
 	}
 
-	err = executeTemplate(tmpl, data, destinationFile)
-	if err != nil {
-		logFatal("failed to write template", "out", destinationFile, "error", err)
-	}
+	for _, input := range inputs {
+		err = filepath.Walk(input, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
 
-	err = dhallFormat(destinationFile)
-	if err != nil {
-		logFatal("failed to format dhall output", "out", destinationFile, "error", err)
+			if info.IsDir() {
+				return nil
+			}
+
+			if filepath.Ext(path) == ".dhall-template" {
+				err = processTemplate(path, data)
+				if err != nil {
+					return fmt.Errorf("failed to process %s: %v", path, err)
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			logFatal("failed to process inputs", "error", err)
+		}
 	}
 
 	log15.Info("Done")
