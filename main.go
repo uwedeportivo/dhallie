@@ -23,7 +23,7 @@ var (
 )
 
 var (
-	componentsFile  string
+	componentsFile string
 
 	printHelp    bool
 	printVersion bool
@@ -108,10 +108,17 @@ type ContainerTuple struct {
 	Identifier    string
 }
 
+type KindTuple struct {
+	Component  string
+	Name       string
+	Kind       string
+	Identifier string
+}
 
 type TemplateData struct {
-	DeploymentTuples []*ContainerTuple
+	DeploymentTuples  []*ContainerTuple
 	StatefulSetTuples []*ContainerTuple
+	KindTuples        []*KindTuple
 }
 
 func containerTuples(targetKind string, comps map[string]interface{}) []*ContainerTuple {
@@ -128,7 +135,7 @@ func containerTuples(targetKind string, comps map[string]interface{}) []*Contain
 				continue
 			}
 			kindDataM, ok := kindData.(map[string]interface{})
-			if ! ok {
+			if !ok {
 				continue
 			}
 
@@ -150,13 +157,41 @@ func containerTuples(targetKind string, comps map[string]interface{}) []*Contain
 
 					for containerName := range sectionDataM {
 						result = append(result, &ContainerTuple{
-							Component: comp,
-							Name: name,
+							Component:     comp,
+							Name:          name,
 							ContainerName: containerName,
-							Identifier: fmt.Sprintf("f%d", len(result)),
+							Identifier:    fmt.Sprintf("f%d", len(result)),
 						})
 					}
 				}
+			}
+		}
+	}
+	return result
+}
+
+func kindTuples(comps map[string]interface{}) []*KindTuple {
+	var result []*KindTuple
+
+	for comp, compData := range comps {
+		compDataM, ok := compData.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		for kind, kindData := range compDataM {
+			kindDataM, ok := kindData.(map[string]interface{})
+			if !ok {
+				continue
+			}
+
+			for name := range kindDataM {
+				result = append(result, &KindTuple{
+					Component:  comp,
+					Kind:       kind,
+					Name:       name,
+					Identifier: fmt.Sprintf("f%d", len(result)),
+				})
 			}
 		}
 	}
@@ -225,10 +260,10 @@ func main() {
 		inputs = []string{cwd}
 	}
 
-
 	data := &TemplateData{
-		DeploymentTuples: containerTuples("Deployment", comps),
+		DeploymentTuples:  containerTuples("Deployment", comps),
 		StatefulSetTuples: containerTuples("StatefulSet", comps),
+		KindTuples:        kindTuples(comps),
 	}
 
 	for _, input := range inputs {
