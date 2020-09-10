@@ -102,11 +102,17 @@ func executeTemplate(tmpl *template.Template, data interface{}, outfilename stri
 	return tmpl.Execute(bout, data)
 }
 
-type DeploymentContainerTuple struct {
+type ContainerTuple struct {
 	Component     string
 	Name          string
 	ContainerName string
 	Identifier    string
+}
+
+
+type TemplateData struct {
+	DeploymentTuples []*ContainerTuple
+	StatefulSetTuples []*ContainerTuple
 }
 
 /*
@@ -138,8 +144,8 @@ Indexed-Search:
                 zoekt-webserver: {}
  */
 
-func deploymentContainerTuples(comps map[string]interface{}) []*DeploymentContainerTuple {
-	var result []*DeploymentContainerTuple
+func containerTuples(targetKind string, comps map[string]interface{}) []*ContainerTuple {
+	var result []*ContainerTuple
 
 	for comp, compData := range comps {
 		compDataM, ok := compData.(map[string]interface{})
@@ -148,7 +154,7 @@ func deploymentContainerTuples(comps map[string]interface{}) []*DeploymentContai
 		}
 
 		for kind, kindData := range compDataM {
-			if kind != "Deployment" {
+			if kind != targetKind {
 				continue
 			}
 			kindDataM, ok := kindData.(map[string]interface{})
@@ -173,7 +179,7 @@ func deploymentContainerTuples(comps map[string]interface{}) []*DeploymentContai
 					}
 
 					for containerName := range sectionDataM {
-						result = append(result, &DeploymentContainerTuple{
+						result = append(result, &ContainerTuple{
 							Component: comp,
 							Name: name,
 							ContainerName: containerName,
@@ -218,7 +224,12 @@ func main() {
 		logFatal("failed to load components", "components", componentsFile, "error", err)
 	}
 
-	err = executeTemplate(tmpl, deploymentContainerTuples(comps), destinationFile)
+	data := &TemplateData{
+		DeploymentTuples: containerTuples("Deployment", comps),
+		StatefulSetTuples: containerTuples("StatefulSet", comps),
+	}
+
+	err = executeTemplate(tmpl, data, destinationFile)
 	if err != nil {
 		logFatal("failed to write template", "out", destinationFile, "error", err)
 	}
